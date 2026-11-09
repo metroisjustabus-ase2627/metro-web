@@ -1,0 +1,17 @@
+#!/bin/sh
+# Adds "AI-Session: <tool>:<session_id>" to the commit message when an AI session
+# was active in the last 2 hours. Remove the line by hand if the commit had no AI help.
+MSG_FILE="$1"
+SOURCE="$2"
+[ "$SOURCE" = "merge" ] && exit 0
+ROOT="$(git rev-parse --show-toplevel)"
+STATE="$ROOT/.ai/logs/.state/last-session.json"
+[ -f "$STATE" ] || exit 0
+command -v node >/dev/null 2>&1 || exit 0
+TRAILER="$(node -e '
+const s = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+if (Date.now() - Date.parse(s.ts) < 2 * 3600 * 1000) process.stdout.write(`AI-Session: ${s.tool}:${s.session_id}`);
+' "$STATE" 2>/dev/null)"
+[ -n "$TRAILER" ] || exit 0
+grep -q "^AI-Session:" "$MSG_FILE" && exit 0
+git interpret-trailers --in-place --trailer "$TRAILER" "$MSG_FILE"
