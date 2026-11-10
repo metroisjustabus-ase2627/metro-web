@@ -18,6 +18,8 @@ Permanent project context:
 
 ## Specification
 
+System requirements v2 (FR, NFR, constraints, out of scope, decisions): [`docs/spec/requirements.md`](docs/spec/requirements.md). Use these IDs (FR-xxx-nn, NFR-xxx-nn, CON-xxx-nn) in specs, tests and commit messages. Identical copy in the other repository; when updating, update both.
+
 Full course statement (v1.0, 2026-09-29): [`docs/spec/metro-is-just-a-bus.md`](docs/spec/metro-is-just-a-bus.md). Identical copy in `metro-core/docs/spec/`; when updating, update both.
 
 This application is one component of the distributed system; notifications and other supporting services live outside this repository.
