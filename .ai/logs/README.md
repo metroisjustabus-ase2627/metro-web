@@ -28,7 +28,12 @@ Hooks cannot know whether the output was good. After each significant AI task, r
 
 ```bash
 node .ai/logs/tools/review.mjs accepted
-node .ai/logs/tools/review.mjs modified "wrong cascade delete, fixed + test" #FR07 --minutes 15 --defects 1
+node .ai/logs/tools/review.mjs modified "wrong cascade delete, fixed + test" FR-VAL-01 --minutes 15 --defects 1
+```
+
+Write requirement IDs without `#` (or quote them): in PowerShell an unquoted `#` starts a comment and the rest of the line is lost.
+
+```bash
 node .ai/logs/tools/review.mjs rejected "invented RabbitMQ API"
 ```
 

@@ -2,7 +2,7 @@
 // Record the HUMAN decision about the last AI output (the part hooks cannot capture).
 //
 //   node .ai/logs/tools/review.mjs accepted
-//   node .ai/logs/tools/review.mjs modified "fixed wrong FK in migration, added test" #FR07
+//   node .ai/logs/tools/review.mjs modified "fixed wrong FK in migration, added test" FR-VAL-01
 //   node .ai/logs/tools/review.mjs rejected "hallucinated MassTransit API"
 //
 // Optional flags: --minutes <n> (human time spent reviewing/fixing), --defects <n>
@@ -20,7 +20,7 @@ const DECISIONS = ['accepted', 'modified', 'rejected', 'deferred'];
 const args = process.argv.slice(2);
 const decision = (args.shift() || '').toLowerCase();
 if (!DECISIONS.includes(decision)) {
-  console.error(`Usage: review.mjs <${DECISIONS.join('|')}> ["note"] [#REQ-ID ...] [--minutes N] [--defects N]`);
+  console.error(`Usage: review.mjs <${DECISIONS.join('|')}> ["note"] [REQ-ID ...] [--minutes N] [--defects N]`);
   process.exit(1);
 }
 
@@ -33,8 +33,10 @@ const flag = (name) => {
 };
 const minutes = flag('minutes');
 const defects = flag('defects');
-const refs = args.filter((a) => /^#[A-Z]{1,6}-?\d{1,4}$/.test(a)).map((a) => a.slice(1));
-const note = args.filter((a) => !a.startsWith('#')).join(' ') || undefined;
+// IDs can be written with or without '#'. In PowerShell an unquoted # starts a comment, so write CON-CI-02 or '#CON-CI-02'.
+const isRef = (a) => /^#?[A-Z]{1,6}(-[A-Z]{1,6})?-?\d{1,4}$/.test(a);
+const refs = args.filter(isRef).map((a) => a.replace(/^#/, ''));
+const note = args.filter((a) => !isRef(a)).join(' ') || undefined;
 
 let member = 'unknown';
 try { member = execFileSync('git', ['config', 'user.name'], { cwd: REPO_ROOT, encoding: 'utf8' }).trim(); } catch {}
