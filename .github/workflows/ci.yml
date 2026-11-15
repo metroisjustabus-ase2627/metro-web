@@ -1,27 +1,33 @@
-name: CI - Continuous Integration
+# CI: build metro-web on pushes to main, develop, feature/** and bugfix/**, on pull requests, and on manual runs.
+# Requirements: CON-CI-01 (automatic build from the repository), CON-CI-02.
+# After a successful build, the "image" job builds the Docker image and, on pushes to main, pushes it to GHCR
+# tagged with the commit SHA (CON-CI-02, CON-DEP-01). Tests, linting and deployment are separate tasks.
+
+name: CI
 
 on:
   push:
-    branches:
-      - main
-      - CIserver
-      - develop
-      - 'feature/**'
-      - 'bugfix/**'
+    branches: [main, develop, 'feature/**', 'bugfix/**']
   pull_request:
-    branches:
-      - main
-      - CIserver
-      - develop
+    branches: [main, develop]
   workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Cancel superseded runs on PRs only: every push to main must produce its own image (CON-CI-02).
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
-    name: Build Project from Repository
+    name: Build (Production)
+    # Defaults to GitHub-hosted; set the repository variable CI_RUNNER to use the self-hosted runner.
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
 
     steps:
-      - name: Checkout repository code
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Node.js 22
@@ -33,13 +39,78 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.npm
-          key: ${{ runner.os }}-npm-${{ hashFiles('**/package-lock.json') }}
+          key: npm-${{ runner.os }}-${{ hashFiles('**/package-lock.json') }}
           restore-keys: |
-            ${{ runner.os }}-npm-
+            npm-${{ runner.os }}-
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Build project (Production)
+      - name: Build
         run: npm run build
 
+  image:
+    name: Docker image (GHCR)
+    needs: build
+    # Pushes to main publish the image; pull requests only build it to validate the Dockerfile.
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+      packages: write
+
+    env:
+      IMAGE_NAME: ghcr.io/metroisjustabus-ase2627/metro-web
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags and labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          # Full commit SHA always; "latest" only on the default branch (main).
+          tags: |
+            type=sha,format=long,prefix=
+            type=raw,value=latest,enable={{is_default_branch}}
+          labels: |
+            org.opencontainers.image.title=metro-web
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Single-manifest image: the SHA tag resolves directly to the runnable image.
+          provenance: false
+
+      - name: Image summary
+        if: github.event_name != 'pull_request'
+        run: |
+          {
+            echo "### Published image"
+            echo
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,15 @@
+services:
+  web:
+    image: metro-web:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: metro-web
+    ports:
+      - "${WEB_HOST_PORT:-4200}:80"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
