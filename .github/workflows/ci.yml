@@ -1,7 +1,7 @@
 # CI: build metro-web on pushes to main, develop, feature/** and bugfix/**, on pull requests, and on manual runs.
 # Requirements: CON-CI-01 (automatic build from the repository), CON-CI-02.
-# After a successful build, the "image" job builds the Docker image and, on pushes to main, pushes it to GHCR
-# tagged with the commit SHA (CON-CI-02, CON-DEP-01). Tests, linting and deployment are separate tasks.
+# The "test" and "quality" jobs gate both image creation and deployment. The image is pushed to GHCR on main
+# (CON-CI-02, CON-DEP-01); pushes to develop deploy the web app to GitHub Pages.
 
 name: CI
 
@@ -168,7 +168,7 @@ jobs:
 
   deploy-development:
     name: Deploy development to GitHub Pages
-    needs: build
+    needs: [build, test, quality]
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     permissions:
