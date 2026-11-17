@@ -1,7 +1,7 @@
 # CI: build metro-web on pushes to main, develop, feature/** and bugfix/**, on pull requests, and on manual runs.
 # Requirements: CON-CI-01 (automatic build from the repository), CON-CI-02.
 # After a successful build, the "image" job builds the Docker image and, on pushes to main, pushes it to GHCR
-# tagged with the commit SHA (CON-CI-02, CON-DEP-01). Tests, linting and deployment are separate tasks.
+# tagged with the commit SHA (CON-CI-02, CON-DEP-01). Pushes to develop deploy the web app to GitHub Pages.
 
 name: CI
 
@@ -114,3 +114,46 @@ jobs:
             echo "${{ steps.meta.outputs.tags }}"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy-development:
+    name: Deploy development to GitHub Pages
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build for GitHub Pages
+        run: npm run build -- --base-href "/${{ github.event.repository.name }}/"
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./dist/metro-web/browser
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
