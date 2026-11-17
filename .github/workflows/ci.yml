@@ -1,7 +1,7 @@
 # CI: build metro-web on pushes to main, develop, feature/** and bugfix/**, on pull requests, and on manual runs.
 # Requirements: CON-CI-01 (automatic build from the repository), CON-CI-02.
 # After a successful build, the "image" job builds the Docker image and, on pushes to main, pushes it to GHCR
-# tagged with the commit SHA (CON-CI-02, CON-DEP-01). Pushes to develop deploy the web app to GitHub Pages.
+# tagged with the commit SHA (CON-CI-02, CON-DEP-01). Tests, linting and deployment are separate tasks.
 
 name: CI
 
@@ -49,9 +49,60 @@ jobs:
       - name: Build
         run: npm run build
 
+  test:
+    name: Unit tests
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit tests
+        run: npm run test:ci
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage
+          if-no-files-found: ignore
+
+  quality:
+    name: Code quality
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check formatting (Prettier)
+        run: npm run format:check
+
+      - name: Type-check (strict TypeScript)
+        run: npx tsc --noEmit -p tsconfig.app.json
+
   image:
     name: Docker image (GHCR)
-    needs: build
+    needs: [build, test, quality]
     # Pushes to main publish the image; pull requests only build it to validate the Dockerfile.
     if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
