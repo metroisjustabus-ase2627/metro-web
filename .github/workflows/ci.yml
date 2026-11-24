@@ -1,8 +1,8 @@
-# CI: build metro-web on pushes to main, develop, feature/** and bugfix/**, on pull requests, and on manual runs.
-# Requirements: CON-CI-01 (automatic build from the repository), CON-CI-02.
-# After a successful build, the "image" job builds the Docker image and, on pushes to main, pushes it to GHCR
-# tagged with the commit SHA (CON-CI-02, CON-DEP-01). The "test" job runs unit tests and the "quality" job runs
-# Prettier and a TypeScript type-check; the image and Pages deployment require all checks to pass.
+# Continuous Integration (CI) — Metro Web
+# Responsibility (T03): build Angular SPA, run unit tests with coverage, verify quality & security,
+# and package ONE immutable Nginx Docker artifact tagged with the commit SHA (Build Only Once).
+# GitHub Pages deployment was removed (ADR-004): deployment runs on DEI VMs via cd-dev.yml and cd-prod.yml.
+# Requirements: CON-CI-01, CON-CI-02, CON-DEP-01, CON-DEP-05.
 
 name: CI
 
@@ -23,35 +23,7 @@ concurrency:
 
 jobs:
   build:
-    name: Build (Production)
-    # Defaults to GitHub-hosted; set the repository variable CI_RUNNER to use the self-hosted runner.
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js 22
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22.x'
-
-      - name: Cache npm dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.npm
-          key: npm-${{ runner.os }}-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: |
-            npm-${{ runner.os }}-
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build
-        run: npm run build
-
-  test:
-    name: Unit tests
+    name: Build (Production Bundle)
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
 
     steps:
@@ -67,10 +39,30 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run unit tests
+      - name: Build
+        run: npm run build
+
+  test:
+    name: Unit Tests (Vitest)
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit tests with coverage
         run: npm run test:ci
 
-      - name: Upload coverage report
+      - name: Upload coverage evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -79,12 +71,14 @@ jobs:
           if-no-files-found: ignore
 
   quality:
-    name: Code quality
+    name: Static Analysis and Security Checks
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js 22
         uses: actions/setup-node@v4
@@ -101,10 +95,20 @@ jobs:
       - name: Type-check (strict TypeScript)
         run: npx tsc --noEmit -p tsconfig.app.json
 
-  image:
-    name: Docker image (GHCR)
+      - name: Check vulnerable production npm packages (SCA)
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Secret scan (Gitleaks OSS — CON-DEP-05)
+        run: >
+          docker run --rm
+          -v "${{ github.workspace }}:/repo"
+          ghcr.io/gitleaks/gitleaks:latest
+          detect --source=/repo --no-banner --redact
+
+  artifact:
+    name: Package Immutable Docker Image (GHCR)
     needs: [build, test, quality]
-    # Pushes to main publish the image; pull requests only build it to validate the Dockerfile.
+    # Pushes to main publish the immutable SHA image; PRs validate Dockerfile without pushing.
     if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     permissions:
@@ -129,12 +133,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Compute image tags and labels
+      - name: Compute immutable image tags and OCI labels
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE_NAME }}
-          # Full commit SHA always; "latest" only on the default branch (main).
           tags: |
             type=sha,format=long,prefix=
             type=raw,value=latest,enable={{is_default_branch}}
@@ -143,7 +146,7 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
 
-      - name: Build and push
+      - name: Build and push (Build Only Once)
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -151,60 +154,19 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            APP_VERSION=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          # Single-manifest image: the SHA tag resolves directly to the runnable image.
           provenance: false
 
-      - name: Image summary
+      - name: Artifact summary
         if: github.event_name != 'pull_request'
         run: |
           {
-            echo "### Published image"
+            echo "### Published immutable CI artifact"
             echo
             echo '```'
             echo "${{ steps.meta.outputs.tags }}"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-  deploy-development:
-    name: Deploy development to GitHub Pages
-    needs: [build, test, quality]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    concurrency:
-      group: pages
-      cancel-in-progress: false
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js 22
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22.x'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build for GitHub Pages
-        run: npm run build -- --base-href "/${{ github.event.repository.name }}/"
-
-      - name: Configure GitHub Pages
-        uses: actions/configure-pages@v5
-
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: ./dist/metro-web/browser
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4

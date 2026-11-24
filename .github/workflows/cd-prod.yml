@@ -1,0 +1,160 @@
+# Continuous Delivery to Production VM (CDE - Production)
+# Responsibility (T03): promote an ALREADY-BUILT, Dev-validated immutable GHCR commit-SHA image
+# to the DEI Production VM behind a human-in-the-loop GitHub Environment approval gate,
+# verify /health + deployed SHA, and automatically roll back on failure.
+# Requirements: CON-CI-01, CON-CI-02, CON-CI-03, CON-CI-04, CON-DEP-01, CON-DEP-02, CON-DEP-04.
+
+name: CDE - Production (VM)
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Immutable commit SHA image tag verified in Dev to promote to Production"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: cde-prod-metro-web
+  cancel-in-progress: false
+
+jobs:
+  promote-production:
+    name: Promote Immutable Image to Production VM
+    if: vars.PROD_RUNNER != '' || vars.PROD_SSH_HOST != ''
+    runs-on: ${{ vars.PROD_RUNNER || 'ubuntu-latest' }}
+    # Configure "Required reviewers" on the GitHub "production" environment for CDE approval gate.
+    environment:
+      name: production
+      url: ${{ vars.PROD_PUBLIC_URL || '' }}
+
+    env:
+      IMAGE_NAME: ghcr.io/metroisjustabus-ase2627/metro-web
+      IMAGE_TAG: ${{ inputs.image_tag }}
+
+    steps:
+      - name: Checkout deployment compose at target revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.IMAGE_TAG }}
+
+      - name: Deploy locally on DEI Production self-hosted runner
+        if: vars.PROD_RUNNER != ''
+        env:
+          PROD_APP_DIR: ${{ vars.PROD_APP_DIR || '/opt/metro-web' }}
+          WEB_HOST_PORT: ${{ vars.PROD_WEB_PORT || '8081' }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$PROD_APP_DIR"
+          cp docker-compose.prod.yml "$PROD_APP_DIR/docker-compose.prod.yml"
+          cd "$PROD_APP_DIR"
+
+          if [ ! -f .env.prod ]; then
+            echo "::error::Missing $PROD_APP_DIR/.env.prod on Production VM"
+            exit 1
+          fi
+
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+
+          PREVIOUS_TAG=""
+          if docker inspect metro-prod-web >/dev/null 2>&1; then
+            PREVIOUS_IMAGE=$(docker inspect --format='{{.Config.Image}}' metro-prod-web || true)
+            PREVIOUS_TAG="${PREVIOUS_IMAGE##*:}"
+          fi
+
+          IMAGE_TAG="$IMAGE_TAG" docker compose -f docker-compose.prod.yml --env-file .env.prod pull web
+          IMAGE_TAG="$IMAGE_TAG" docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+
+          HEALTH_URL="http://127.0.0.1:${WEB_HOST_PORT}/health"
+          HEALTHY=false
+          for i in $(seq 1 10); do
+            BODY=$(curl -fsS "$HEALTH_URL" 2>/dev/null || true)
+            if echo "$BODY" | grep -q "\"status\":\"Healthy\"" && echo "$BODY" | grep -q "$IMAGE_TAG"; then
+              echo "Production VM web health & version check passed: $BODY"
+              HEALTHY=true
+              break
+            fi
+            sleep 3
+          done
+
+          if [ "$HEALTHY" != "true" ]; then
+            echo "::error::Production web health check failed for $IMAGE_TAG"
+            if [ -n "$PREVIOUS_TAG" ] && [ "$PREVIOUS_TAG" != "$IMAGE_TAG" ]; then
+              echo "Rolling back Production web to previous image tag: $PREVIOUS_TAG"
+              IMAGE_TAG="$PREVIOUS_TAG" docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+            fi
+            exit 1
+          fi
+
+      - name: Deploy over SSH to DEI Production VM (fallback)
+        if: vars.PROD_RUNNER == '' && vars.PROD_SSH_HOST != ''
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.PROD_SSH_KEY }}
+          SSH_USER: ${{ vars.PROD_SSH_USER }}
+          SSH_HOST: ${{ vars.PROD_SSH_HOST }}
+          PROD_APP_DIR: ${{ vars.PROD_APP_DIR || '/opt/metro-web' }}
+          WEB_HOST_PORT: ${{ vars.PROD_WEB_PORT || '8081' }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          install -m 600 /dev/null ~/.ssh_deploy_key
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh_deploy_key
+          trap 'rm -f ~/.ssh_deploy_key' EXIT
+
+          SSH_OPTS="-i ~/.ssh_deploy_key -o StrictHostKeyChecking=accept-new"
+          ssh $SSH_OPTS "$SSH_USER@$SSH_HOST" "mkdir -p '$PROD_APP_DIR'"
+          scp $SSH_OPTS docker-compose.prod.yml "$SSH_USER@$SSH_HOST:$PROD_APP_DIR/docker-compose.prod.yml"
+
+          ssh $SSH_OPTS "$SSH_USER@$SSH_HOST" bash -s -- "$PROD_APP_DIR" "$IMAGE_TAG" "$WEB_HOST_PORT" "$GHCR_USER" "$GHCR_TOKEN" <<'REMOTE'
+          set -euo pipefail
+          PROD_APP_DIR="$1"
+          IMAGE_TAG="$2"
+          WEB_HOST_PORT="$3"
+          GHCR_USER="$4"
+          GHCR_TOKEN="$5"
+
+          cd "$PROD_APP_DIR"
+          if [ ! -f .env.prod ]; then
+            echo "Missing $PROD_APP_DIR/.env.prod on Production VM" >&2
+            exit 1
+          fi
+
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+
+          PREVIOUS_TAG=""
+          if docker inspect metro-prod-web >/dev/null 2>&1; then
+            PREVIOUS_IMAGE=$(docker inspect --format='{{.Config.Image}}' metro-prod-web || true)
+            PREVIOUS_TAG="${PREVIOUS_IMAGE##*:}"
+          fi
+
+          IMAGE_TAG="$IMAGE_TAG" docker compose -f docker-compose.prod.yml --env-file .env.prod pull web
+          IMAGE_TAG="$IMAGE_TAG" docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+
+          HEALTH_URL="http://127.0.0.1:${WEB_HOST_PORT}/health"
+          HEALTHY=false
+          for i in $(seq 1 10); do
+            BODY=$(curl -fsS "$HEALTH_URL" 2>/dev/null || true)
+            if echo "$BODY" | grep -q "\"status\":\"Healthy\"" && echo "$BODY" | grep -q "$IMAGE_TAG"; then
+              echo "Production VM web health & version check passed: $BODY"
+              HEALTHY=true
+              break
+            fi
+            sleep 3
+          done
+
+          if [ "$HEALTHY" != "true" ]; then
+            echo "Production web health check failed for $IMAGE_TAG" >&2
+            if [ -n "$PREVIOUS_TAG" ] && [ "$PREVIOUS_TAG" != "$IMAGE_TAG" ]; then
+              echo "Rolling back Production web to previous image tag: $PREVIOUS_TAG" >&2
+              IMAGE_TAG="$PREVIOUS_TAG" docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+            fi
+            exit 1
+          fi
+          REMOTE

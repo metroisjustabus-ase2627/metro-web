@@ -1,0 +1,166 @@
+# Continuous Deployment to Development VM (CD - Development)
+# Responsibility (T03): automatically deploy the exact immutable Nginx Docker image produced by CI
+# to the DEI Development VM (no rebuild — Build Only Once; replaces GitHub Pages),
+# validate /health + commit SHA, and automatically roll back on failure.
+# Requirements: CON-CI-01, CON-CI-02, CON-CI-04, CON-DEP-01, CON-DEP-02, CON-DEP-03.
+
+name: CD - Development (VM)
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Commit SHA image tag in GHCR to deploy to Dev VM"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: cd-dev-metro-web
+  cancel-in-progress: false
+
+jobs:
+  deploy-dev:
+    name: Deploy Immutable Image to Dev VM
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')) &&
+      (vars.DEV_RUNNER != '' || vars.CI_RUNNER != '' || vars.DEV_SSH_HOST != '')
+    runs-on: ${{ vars.DEV_RUNNER || vars.CI_RUNNER || 'ubuntu-latest' }}
+    environment:
+      name: development
+      url: ${{ vars.DEV_PUBLIC_URL || '' }}
+
+    env:
+      IMAGE_NAME: ghcr.io/metroisjustabus-ase2627/metro-web
+      IMAGE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.image_tag || github.event.workflow_run.head_sha }}
+
+    steps:
+      - name: Checkout deployment compose at target revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.IMAGE_TAG }}
+
+      - name: Deploy locally on DEI Dev self-hosted runner
+        if: vars.DEV_RUNNER != '' || vars.CI_RUNNER != ''
+        env:
+          DEV_APP_DIR: ${{ vars.DEV_APP_DIR || '/opt/metro-web' }}
+          WEB_HOST_PORT: ${{ vars.DEV_WEB_PORT || '4200' }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$DEV_APP_DIR"
+          cp docker-compose.dev.yml "$DEV_APP_DIR/docker-compose.dev.yml"
+          cd "$DEV_APP_DIR"
+
+          if [ ! -f .env.dev ]; then
+            echo "::error::Missing $DEV_APP_DIR/.env.dev on Dev VM"
+            exit 1
+          fi
+
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+
+          PREVIOUS_TAG=""
+          if docker inspect metro-dev-web >/dev/null 2>&1; then
+            PREVIOUS_IMAGE=$(docker inspect --format='{{.Config.Image}}' metro-dev-web || true)
+            PREVIOUS_TAG="${PREVIOUS_IMAGE##*:}"
+          fi
+
+          IMAGE_TAG="$IMAGE_TAG" docker compose -f docker-compose.dev.yml --env-file .env.dev pull web
+          IMAGE_TAG="$IMAGE_TAG" docker compose -f docker-compose.dev.yml --env-file .env.dev up -d
+
+          HEALTH_URL="http://127.0.0.1:${WEB_HOST_PORT}/health"
+          HEALTHY=false
+          for i in $(seq 1 10); do
+            BODY=$(curl -fsS "$HEALTH_URL" 2>/dev/null || true)
+            if echo "$BODY" | grep -q "\"status\":\"Healthy\"" && echo "$BODY" | grep -q "$IMAGE_TAG"; then
+              echo "Dev VM web health check passed: $BODY"
+              HEALTHY=true
+              break
+            fi
+            sleep 3
+          done
+
+          if [ "$HEALTHY" != "true" ]; then
+            echo "::error::Dev VM web health check failed for $IMAGE_TAG"
+            if [ -n "$PREVIOUS_TAG" ] && [ "$PREVIOUS_TAG" != "$IMAGE_TAG" ]; then
+              echo "Rolling back to previous image tag: $PREVIOUS_TAG"
+              IMAGE_TAG="$PREVIOUS_TAG" docker compose -f docker-compose.dev.yml --env-file .env.dev up -d
+            fi
+            exit 1
+          fi
+
+      - name: Deploy over SSH to DEI Dev VM (fallback)
+        if: vars.DEV_RUNNER == '' && vars.CI_RUNNER == '' && vars.DEV_SSH_HOST != ''
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.DEV_SSH_KEY }}
+          SSH_USER: ${{ vars.DEV_SSH_USER }}
+          SSH_HOST: ${{ vars.DEV_SSH_HOST }}
+          DEV_APP_DIR: ${{ vars.DEV_APP_DIR || '/opt/metro-web' }}
+          WEB_HOST_PORT: ${{ vars.DEV_WEB_PORT || '4200' }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          install -m 600 /dev/null ~/.ssh_deploy_key
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh_deploy_key
+          trap 'rm -f ~/.ssh_deploy_key' EXIT
+
+          SSH_OPTS="-i ~/.ssh_deploy_key -o StrictHostKeyChecking=accept-new"
+          ssh $SSH_OPTS "$SSH_USER@$SSH_HOST" "mkdir -p '$DEV_APP_DIR'"
+          scp $SSH_OPTS docker-compose.dev.yml "$SSH_USER@$SSH_HOST:$DEV_APP_DIR/docker-compose.dev.yml"
+
+          ssh $SSH_OPTS "$SSH_USER@$SSH_HOST" bash -s -- "$DEV_APP_DIR" "$IMAGE_TAG" "$WEB_HOST_PORT" "$GHCR_USER" "$GHCR_TOKEN" <<'REMOTE'
+          set -euo pipefail
+          DEV_APP_DIR="$1"
+          IMAGE_TAG="$2"
+          WEB_HOST_PORT="$3"
+          GHCR_USER="$4"
+          GHCR_TOKEN="$5"
+
+          cd "$DEV_APP_DIR"
+          if [ ! -f .env.dev ]; then
+            echo "Missing $DEV_APP_DIR/.env.dev on Dev VM" >&2
+            exit 1
+          fi
+
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+
+          PREVIOUS_TAG=""
+          if docker inspect metro-dev-web >/dev/null 2>&1; then
+            PREVIOUS_IMAGE=$(docker inspect --format='{{.Config.Image}}' metro-dev-web || true)
+            PREVIOUS_TAG="${PREVIOUS_IMAGE##*:}"
+          fi
+
+          IMAGE_TAG="$IMAGE_TAG" docker compose -f docker-compose.dev.yml --env-file .env.dev pull web
+          IMAGE_TAG="$IMAGE_TAG" docker compose -f docker-compose.dev.yml --env-file .env.dev up -d
+
+          HEALTH_URL="http://127.0.0.1:${WEB_HOST_PORT}/health"
+          HEALTHY=false
+          for i in $(seq 1 10); do
+            BODY=$(curl -fsS "$HEALTH_URL" 2>/dev/null || true)
+            if echo "$BODY" | grep -q "\"status\":\"Healthy\"" && echo "$BODY" | grep -q "$IMAGE_TAG"; then
+              echo "Dev VM web health check passed: $BODY"
+              HEALTHY=true
+              break
+            fi
+            sleep 3
+          done
+
+          if [ "$HEALTHY" != "true" ]; then
+            echo "Dev VM web health check failed for $IMAGE_TAG" >&2
+            if [ -n "$PREVIOUS_TAG" ] && [ "$PREVIOUS_TAG" != "$IMAGE_TAG" ]; then
+              echo "Rolling back to previous image tag: $PREVIOUS_TAG" >&2
+              IMAGE_TAG="$PREVIOUS_TAG" docker compose -f docker-compose.dev.yml --env-file .env.dev up -d
+            fi
+            exit 1
+          fi
+          REMOTE

@@ -36,9 +36,19 @@ ng build
 
 This will compile your project and store the build artifacts in the `dist/` directory. By default, the production build optimizes your application for performance and speed.
 
-## Development deployment
+## CI/CDE/CD and VM Deployment (Build Only Once)
 
-Pushes to the `develop` branch build the Angular app with the repository subpath and deploy it to GitHub Pages. Pull requests and other branches do not deploy. In the repository settings, set **Settings → Pages → Build and deployment → Source** to **GitHub Actions**. The Pages URL is `https://<owner>.github.io/<repository>/`.
+GitHub Pages is **not** used. All components run as Docker containers on DEI Virtual Machines (`CON-DEP-01`, `CON-DEP-02`, `CON-DEP-03`, `ADR-004`):
+
+1. **CI (`.github/workflows/ci.yml`)**: builds the production Angular bundle, runs Vitest unit tests with coverage, checks Prettier, strict TypeScript, `npm audit`, and Gitleaks secret scanning, and packages **one immutable Nginx image** (`ghcr.io/metroisjustabus-ase2627/metro-web:<commit-sha>`) with `APP_VERSION=<commit-sha>` exposed at `GET /health`.
+2. **CD — Development VM (`.github/workflows/cd-dev.yml`)**: runs automatically after green CI on `main` via the DEI Dev VM self-hosted runner (`DEV_RUNNER`/`CI_RUNNER`) or SSH fallback, pulls the exact `<commit-sha>` image (`docker-compose.dev.yml`), validates `GET /health` (`Healthy` + exact SHA), and automatically rolls back on failure.
+3. **CDE — Production VM (`.github/workflows/cd-prod.yml`)**: manual promotion (`workflow_dispatch` + GitHub `production` environment approval gate) of the same Dev-validated `<commit-sha>` image (`docker-compose.prod.yml`), with `/health` + SHA verification and automatic rollback.
+
+To run the containerized Nginx build locally (exposing `GET /health` on port `4200`):
+
+```bash
+docker compose up --build -d
+```
 
 ## Running unit tests
 

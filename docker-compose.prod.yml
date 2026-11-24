@@ -1,0 +1,29 @@
+# Reproducible Production VM deployment using exact immutable commit SHA from GHCR (CON-DEP-01, CON-DEP-02, CON-CI-02).
+# Never rebuild on the Production VM (Build Only Once — T03).
+# Usage on Prod VM:
+#   IMAGE_TAG=<commit-sha> docker compose -f docker-compose.prod.yml --env-file .env.prod pull
+#   IMAGE_TAG=<commit-sha> docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+
+services:
+  web:
+    image: ghcr.io/metroisjustabus-ase2627/metro-web:${IMAGE_TAG:?IMAGE_TAG commit SHA is required}
+    container_name: metro-prod-web
+    restart: unless-stopped
+    ports:
+      - "${WEB_HOST_PORT:-8081}:80"
+    environment:
+      API_UPSTREAM: ${API_UPSTREAM:-http://host.docker.internal:8080}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - metro-prod-web-net
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+networks:
+  metro-prod-web-net:
+    driver: bridge

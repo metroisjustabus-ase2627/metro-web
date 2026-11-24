@@ -1,0 +1,22 @@
+# Code Owners — Metro Web (PL8 & T10: enforce independent reviews on critical paths and AI configs)
+# Requires branch protection with "Require review from Code Owners" enabled in repository settings.
+
+* @TitanGamer179 @Philipnick @ImaJellyfis @pbgollo @pepeeemv
+
+# CI/CD workflows and governance files
+/.github/CODEOWNERS @TitanGamer179 @Philipnick @ImaJellyfis
+/.github/workflows/ @TitanGamer179 @Philipnick @ImaJellyfis
+
+# Containerization and Nginx configuration
+/Dockerfile @TitanGamer179 @Philipnick @ImaJellyfis @pbgollo
+/docker-compose*.yml @TitanGamer179 @Philipnick @ImaJellyfis @pbgollo
+/nginx.conf @TitanGamer179 @Philipnick @ImaJellyfis @pbgollo
+
+# Shared specification, ADRs, SDD artifacts, and agent rule/hook configs (T10 slide 33 hardening)
+/docs/spec/ @Philipnick @TitanGamer179
+/docs/adr/ @Philipnick @TitanGamer179
+/.ai/steering/ @Philipnick @TitanGamer179
+/.ai/sdd/ @Philipnick @TitanGamer179
+/.ai/prompts/ @Philipnick @TitanGamer179
+/.cursor/ @Philipnick @TitanGamer179
+/.claude/ @Philipnick @TitanGamer179
