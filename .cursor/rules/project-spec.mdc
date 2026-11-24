@@ -5,9 +5,9 @@ alwaysApply: false
 
 # Project specification
 
-The searchable specification is `docs/spec/metro-is-just-a-bus.md` (statement v1.0, 2026-09-29). The original PDF is in `docs/spec/`. An identical copy lives in `metro-core`; when updating the statement, update both.
+The searchable specification is `docs/spec/metro-is-just-a-bus.md` (statement v1.1, 2026-11-17) and the system requirements are in `docs/spec/requirements.md` (v2). The original PDF is in `docs/spec/`. Identical copies live in `metro-core`; when updating them, update both.
 
-Permanent agent context (SDD): `.ai/steering/` (`product.md`, `tech-stack.md`, `conventions.md`, `principles.md`) and `AGENTS.md`.
+Permanent agent context (SDD): `.ai/steering/` (`product.md`, `tech-stack.md`, `conventions.md`, `principles.md`), `.ai/sdd/specs/`, `docs/adr/`, and `AGENTS.md`.
 
 ## What to read when
 

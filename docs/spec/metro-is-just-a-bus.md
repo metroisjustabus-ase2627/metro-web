@@ -1,7 +1,7 @@
 # MetroIsJustABus — project specification
 
-Source: *Automated Software Engineering Course Project* statement, version 1.0 (2026-09-29).
-The original PDF is in this directory: `Automated_Software_Development_Project_Complete.v1.0.pdf`.
+Source: *Automated Software Engineering Course Project* statement, version 1.1 (2026-11-17; v1.0 2026-09-29).
+The original PDF is in this directory: `Automated_Software_Development_Project_Complete.v1.1.pdf`.
 This file is the searchable transcription. If there is any conflict, the PDF prevails.
 
 The same `docs/spec/` folder exists in `metro-core` and `metro-web`. When updating the statement, update both copies.
@@ -261,6 +261,8 @@ The solution must include:
 - Selection and implementation of an appropriate deployment strategy.
 - Management of configuration, secrets, persistent data, networks, and service dependencies.
 - Mechanisms for validating deployments and recovering from unsuccessful deployments.
+
+VMs can be requested through the DEI Helpdesk (https://my.dei.uc.pt/login).
 
 ### AI-Assisted and Agentic Engineering
 

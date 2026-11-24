@@ -30,7 +30,7 @@
 ## Auth and roles
 
 - Store tokens securely according to the chosen SPA pattern (avoid XSS-prone storage mistakes)
-- Use route guards for authenticated and role-restricted areas (`client` / passenger vs `master` / ops as defined by the API)
+- Use route guards for authenticated and role-restricted areas (`Passenger` vs `Staff` — matching the canonical API/JWT/DB roles in `FR-ACC-02` and `ADR-003`)
 - UI hiding is not authorization — the API enforces permissions
 
 ## Forms

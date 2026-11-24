@@ -28,7 +28,7 @@ This is version 2 of the system-level requirements. It answers the Milestone 1 f
 
 ## 2. Sources
 
-Every requirement points to one or more source IDs below, which refer to the project statement v1.0 (2026-09-29). This replaces the v1 line numbers, which depended on how the PDF was counted.
+Every requirement points to one or more source IDs below, which refer to the project statement v1.1 (2026-11-17; v1.0 2026-09-29). This replaces the v1 line numbers, which depended on how the PDF was counted.
 
 | ID | Statement section | Key passage (short quote) |
 | --- | --- | --- |
