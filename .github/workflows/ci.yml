@@ -30,10 +30,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 22
+      - name: Setup Node.js 24
         uses: actions/setup-node@v4
         with:
-          node-version: '22.x'
+          node-version: '24.x'
           cache: npm
 
       - name: Install dependencies
@@ -50,10 +50,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 22
+      - name: Setup Node.js 24
         uses: actions/setup-node@v4
         with:
-          node-version: '22.x'
+          node-version: '24.x'
           cache: npm
 
       - name: Install dependencies
@@ -80,10 +80,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup Node.js 22
+      - name: Setup Node.js 24
         uses: actions/setup-node@v4
         with:
-          node-version: '22.x'
+          node-version: '24.x'
           cache: npm
 
       - name: Install dependencies
@@ -99,11 +99,36 @@ jobs:
         run: npm audit --omit=dev --audit-level=high
 
       - name: Secret scan (Gitleaks OSS — CON-DEP-05)
-        run: >
-          docker run --rm
-          -v "${{ github.workspace }}:/repo"
-          ghcr.io/gitleaks/gitleaks:latest
-          detect --source=/repo --no-banner --redact
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # 1. Always scan 100% of current repository files at HEAD.
+          docker run --rm \
+            -v "${{ github.workspace }}:/repo" \
+            -w /repo \
+            ghcr.io/gitleaks/gitleaks:latest \
+            dir . --config=.gitleaks.toml --no-banner --redact --verbose
+
+          # 2. Scan all commits introduced by this PR or push.
+          RANGE=""
+          if [ "$EVENT_NAME" = "pull_request" ] && [ -n "$PR_BASE_SHA" ]; then
+            RANGE="${PR_BASE_SHA}..${PR_HEAD_SHA}"
+          elif [ "$EVENT_NAME" = "push" ] && [ -n "$PUSH_BEFORE_SHA" ] && [ "$PUSH_BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
+            RANGE="${PUSH_BEFORE_SHA}..${HEAD_SHA}"
+          fi
+
+          if [ -n "$RANGE" ]; then
+            docker run --rm \
+              -v "${{ github.workspace }}:/repo" \
+              -w /repo \
+              ghcr.io/gitleaks/gitleaks:latest \
+              git . --config=.gitleaks.toml --log-opts="$RANGE" --no-banner --redact --verbose
+          fi
 
   artifact:
     name: Package Immutable Docker Image (GHCR)

@@ -1,0 +1,18 @@
+title = "MetroIsJustABus — Gitleaks Configuration (CON-DEP-05)"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Exclude explicit CHANGE_ME placeholders, dependency/build outputs, and automated AI transcript blobs"
+regexes = [
+  '''CHANGE_ME_[A-Za-z0-9_]+''',
+]
+paths = [
+  '''(^|/)\.git/''',
+  '''(^|/)\.ai/logs/transcripts/''',
+  '''(^|/)node_modules/''',
+  '''(^|/)dist/''',
+  '''(^|/)coverage/''',
+  '''(^|/)\.angular/''',
+]

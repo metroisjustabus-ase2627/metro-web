@@ -6,6 +6,7 @@
 # CI/CD workflows and governance files
 /.github/CODEOWNERS @TitanGamer179 @Philipnick @ImaJellyfis
 /.github/workflows/ @TitanGamer179 @Philipnick @ImaJellyfis
+/.gitleaks.toml @TitanGamer179 @Philipnick @ImaJellyfis
 
 # Containerization and Nginx configuration
 /Dockerfile @TitanGamer179 @Philipnick @ImaJellyfis @pbgollo
